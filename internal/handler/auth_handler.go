@@ -171,7 +171,7 @@ func (h *AuthHandler) LinkedInLogin(c echo.Context) error {
 	params := url.Values{}
 	params.Add("response_type", "code")
 	params.Add("client_id", h.config.LinkedIn.ClientID)
-	params.Add("redirect_uri", fmt.Sprintf(h.config.LinkedIn.ClientCallbackUrl, h.config.Server.Port))
+	params.Add("redirect_uri", h.config.LinkedIn.ClientCallbackUrl)
 	params.Add("state", state)
 	params.Add("scope", "openid profile email") // LinkedIn OpenID Connect scopes
 
@@ -225,7 +225,7 @@ func (h *AuthHandler) LinkedInCallback(c echo.Context) error {
 	formData := url.Values{}
 	formData.Set("grant_type", "authorization_code")
 	formData.Set("code", code)
-	formData.Set("redirect_uri", fmt.Sprintf(h.config.LinkedIn.ClientCallbackUrl, h.config.Server.Port))
+	formData.Set("redirect_uri", h.config.LinkedIn.ClientCallbackUrl)
 	formData.Set("client_id", h.config.LinkedIn.ClientID)
 	formData.Set("client_secret", h.config.LinkedIn.ClientSecret)
 
