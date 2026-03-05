@@ -66,6 +66,14 @@ func (m *MockAuthService) Logout(ctx context.Context, refreshToken string) error
 	return args.Error(0)
 }
 
+func (m *MockAuthService) LinkedInLogin(ctx context.Context, linkedInID, email, firstName, lastName string) (*domain.AuthResponse, error) {
+	args := m.Called(ctx, linkedInID, email, firstName, lastName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.AuthResponse), args.Error(1)
+}
+
 func setupEcho() *echo.Echo {
 	e := echo.New()
 	e.Validator = validator.New()
@@ -82,7 +90,7 @@ func TestAuthHandler_Register(t *testing.T) {
 		DB:       0,
 		Port:     "6379",
 	})
-	handler := NewAuthHandler(mockService, e.Validator, redisCache)
+	handler := NewAuthHandler(mockService, e.Validator, redisCache, config.Config{})
 
 	t.Run("successful registration", func(t *testing.T) {
 		reqBody := domain.RegisterRequest{
@@ -154,7 +162,7 @@ func TestAuthHandler_Login(t *testing.T) {
 		DB:       0,
 		Port:     "6379",
 	})
-	handler := NewAuthHandler(mockService, e.Validator, redisCache)
+	handler := NewAuthHandler(mockService, e.Validator, redisCache, config.Config{})
 
 	t.Run("successful login", func(t *testing.T) {
 		reqBody := domain.LoginRequest{
@@ -219,7 +227,7 @@ func TestAuthHandler_RefreshToken(t *testing.T) {
 		DB:       0,
 		Port:     "6379",
 	})
-	handler := NewAuthHandler(mockService, e.Validator, redisCache)
+	handler := NewAuthHandler(mockService, e.Validator, redisCache, config.Config{})
 
 	t.Run("successful token refresh", func(t *testing.T) {
 		reqBody := domain.RefreshTokenRequest{
@@ -257,7 +265,7 @@ func TestAuthHandler_Logout(t *testing.T) {
 		DB:       0,
 		Port:     "6379",
 	})
-	handler := NewAuthHandler(mockService, e.Validator, redisCache)
+	handler := NewAuthHandler(mockService, e.Validator, redisCache, config.Config{})
 
 	t.Run("successful logout", func(t *testing.T) {
 		reqBody := domain.RefreshTokenRequest{

@@ -32,6 +32,7 @@ func Setup(
 		auth.POST("/refresh", authHandler.RefreshToken)
 		auth.POST("/logout", authHandler.Logout)
 		auth.GET("/linkedin/login", authHandler.LinkedInLogin)
+		auth.GET("/linkedin/callback", authHandler.LinkedInCallback)
 		auth.POST("/forgot-password", authHandler.ForgottenPassword)
 		auth.POST("/forgot-password/validate", authHandler.ValidateForgottenPasswordOTP)
 		auth.POST("/reset-password", authHandler.ResetPassword)

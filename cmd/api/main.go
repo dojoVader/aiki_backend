@@ -87,7 +87,7 @@ func main() {
 	e.GET("/swagger/*", echo.WrapHandler(httpSwagger.WrapHandler))
 
 	// Handlers
-	authHandler := handler.NewAuthHandler(authService, e.Validator, redis)
+	authHandler := handler.NewAuthHandler(authService, e.Validator, redis, *cfg)
 	userHandler := handler.NewUserHandler(userService, e.Validator)
 	jobHandler := handler.NewJobHandler(jobService, e.Validator)
 	homeHandler := handler.NewHomeHandler(homeService, e.Validator)

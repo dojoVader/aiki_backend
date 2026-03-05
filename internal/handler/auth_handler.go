@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"aiki/internal/config"
@@ -36,11 +38,12 @@ const (
 )
 
 // NewAuthHandler Update the constructor to accept config
-func NewAuthHandler(authService service.AuthService, validator echo.Validator, redis *redis.Client) *AuthHandler {
+func NewAuthHandler(authService service.AuthService, validator echo.Validator, redis *redis.Client, cfg config.Config) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
 		validator:   validator,
 		redis:       redis,
+		config:      cfg,
 	}
 }
 
@@ -170,11 +173,135 @@ func (h *AuthHandler) LinkedInLogin(c echo.Context) error {
 	params.Add("client_id", h.config.LinkedIn.ClientID)
 	params.Add("redirect_uri", fmt.Sprintf(h.config.LinkedIn.ClientCallbackUrl, h.config.Server.Port))
 	params.Add("state", state)
-	params.Add("scope", "r_liteprofile r_emailaddress") // Request basic profile and email
+	params.Add("scope", "openid profile email") // LinkedIn OpenID Connect scopes
 
 	fullURL := linkedInAuthURL + "?" + params.Encode()
 
 	return c.Redirect(http.StatusFound, fullURL)
+}
+
+// LinkedInCallback godoc
+// @Summary Handle LinkedIn OAuth callback
+// @Description Exchanges authorization code for tokens and logs in/registers the user
+// @Tags auth
+// @Produce json
+// @Param code query string true "Authorization code from LinkedIn"
+// @Param state query string true "CSRF state parameter"
+// @Success 200 {object} response.Response{data=domain.AuthResponse}
+// @Failure 400 {object} response.Response
+// @Failure 401 {object} response.Response
+// @Failure 500 {object} response.Response
+// @Router /auth/linkedin/callback [get]
+func (h *AuthHandler) LinkedInCallback(c echo.Context) error {
+	// Debug logging
+	c.Logger().Infof("LinkedIn Callback Hit! Raw Query: %s", c.Request().URL.RawQuery)
+	c.Logger().Infof("Query params: %v", c.QueryParams())
+
+	// 1. Validate CSRF state
+	code := c.QueryParam("code")
+	state := c.QueryParam("state")
+
+	if code == "" || state == "" {
+		c.Logger().Errorf("Missing code (%v) or state (%v)", code != "", state != "")
+		return response.ValidationError(c, "missing code or state parameter")
+	}
+
+	cookie, err := c.Cookie("linkedin_oauth_state")
+	if err != nil || cookie.Value != state {
+		return response.Error(c, domain.ErrUnauthorized)
+	}
+
+	// Clear the state cookie
+	c.SetCookie(&http.Cookie{
+		Name:     "linkedin_oauth_state",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+	})
+
+	// 2. Exchange authorization code for access token
+	tokenURL := "https://www.linkedin.com/oauth/v2/accessToken"
+	formData := url.Values{}
+	formData.Set("grant_type", "authorization_code")
+	formData.Set("code", code)
+	formData.Set("redirect_uri", fmt.Sprintf(h.config.LinkedIn.ClientCallbackUrl, h.config.Server.Port))
+	formData.Set("client_id", h.config.LinkedIn.ClientID)
+	formData.Set("client_secret", h.config.LinkedIn.ClientSecret)
+
+	tokenReq, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(formData.Encode()))
+	if err != nil {
+		c.Logger().Errorf("failed to create token request: %v", err)
+		return response.Error(c, domain.ErrInternalServer)
+	}
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	tokenResp, err := client.Do(tokenReq)
+	if err != nil {
+		c.Logger().Errorf("failed to exchange code for token: %v", err)
+		return response.Error(c, domain.ErrInternalServer)
+	}
+	defer tokenResp.Body.Close()
+
+	if tokenResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(tokenResp.Body)
+		c.Logger().Errorf("linkedin token exchange failed: status=%d body=%s", tokenResp.StatusCode, string(body))
+		return response.Error(c, domain.ErrInternalServer)
+	}
+
+	var tokenData struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.NewDecoder(tokenResp.Body).Decode(&tokenData); err != nil {
+		c.Logger().Errorf("failed to decode token response: %v", err)
+		return response.Error(c, domain.ErrInternalServer)
+	}
+
+	// 3. Fetch user info from LinkedIn using OpenID Connect userinfo endpoint
+	userInfoReq, err := http.NewRequest(http.MethodGet, "https://api.linkedin.com/v2/userinfo", nil)
+	if err != nil {
+		c.Logger().Errorf("failed to create userinfo request: %v", err)
+		return response.Error(c, domain.ErrInternalServer)
+	}
+	userInfoReq.Header.Set("Authorization", "Bearer "+tokenData.AccessToken)
+
+	userInfoResp, err := client.Do(userInfoReq)
+	if err != nil {
+		c.Logger().Errorf("failed to fetch linkedin user info: %v", err)
+		return response.Error(c, domain.ErrInternalServer)
+	}
+	defer userInfoResp.Body.Close()
+
+	if userInfoResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(userInfoResp.Body)
+		c.Logger().Errorf("linkedin userinfo failed: status=%d body=%s", userInfoResp.StatusCode, string(body))
+		return response.Error(c, domain.ErrInternalServer)
+	}
+
+	var linkedInUser struct {
+		Sub        string `json:"sub"` // LinkedIn unique user ID
+		Email      string `json:"email"`
+		GivenName  string `json:"given_name"`
+		FamilyName string `json:"family_name"`
+	}
+	if err := json.NewDecoder(userInfoResp.Body).Decode(&linkedInUser); err != nil {
+		c.Logger().Errorf("failed to decode userinfo response: %v", err)
+		return response.Error(c, domain.ErrInternalServer)
+	}
+
+	if linkedInUser.Sub == "" || linkedInUser.Email == "" {
+		c.Logger().Error("linkedin returned empty sub or email")
+		return response.Error(c, domain.ErrInternalServer)
+	}
+
+	// 4. Login or register via service layer
+	authResp, err := h.authService.LinkedInLogin(c.Request().Context(), linkedInUser.Sub, linkedInUser.Email, linkedInUser.GivenName, linkedInUser.FamilyName)
+	if err != nil {
+		return response.Error(c, err)
+	}
+
+	return response.Success(c, http.StatusOK, "linkedin login successful", authResp)
 }
 
 // Logout godoc

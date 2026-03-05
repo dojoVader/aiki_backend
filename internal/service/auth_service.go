@@ -21,6 +21,7 @@ type AuthService interface {
 	Logout(ctx context.Context, refreshToken string) error
 	ForgottenPassword(ctx context.Context, req *domain.ForgotPasswordRequest) (string, error)
 	ResetPassword(ctx context.Context, userEmail, newPassword string) error
+	LinkedInLogin(ctx context.Context, linkedInID, email, firstName, lastName string) (*domain.AuthResponse, error)
 }
 
 type authService struct {
@@ -197,4 +198,59 @@ func (s *authService) ResetPassword(ctx context.Context, userEmail, newPassword 
 		return errors.New("error updating user password, please try again")
 	}
 	return nil
+}
+
+func (s *authService) LinkedInLogin(ctx context.Context, linkedInID, email, firstName, lastName string) (*domain.AuthResponse, error) {
+	// Try to find existing user by LinkedIn ID
+	user, err := s.userRepo.GetByLinkedInID(ctx, linkedInID)
+	if err != nil && err != domain.ErrUserNotFound {
+		return nil, err
+	}
+
+	// If not found by LinkedIn ID, try by email
+	if user == nil {
+		user, err = s.userRepo.GetByEmail(ctx, email)
+		if err != nil && err != domain.ErrUserNotFound {
+			return nil, err
+		}
+	}
+
+	if user != nil {
+		// Link LinkedIn ID to existing user if not already linked
+		if user.LinkedInID == nil || *user.LinkedInID != linkedInID {
+			if err := s.userRepo.UpdateLinkedInID(ctx, user.ID, linkedInID, &firstName, &lastName); err != nil {
+				return nil, err
+			}
+		}
+	} else {
+		// Create new user with LinkedIn info
+		user, err = s.userRepo.CreateLinkedInUser(ctx, email, linkedInID, &firstName, &lastName)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Generate tokens
+	accessToken, err := s.jwtManager.GenerateAccessToken(user.ID, user.Email)
+	if err != nil {
+		return nil, err
+	}
+
+	refreshToken := s.jwtManager.GenerateRefreshToken()
+	expiresAt := time.Now().Add(s.jwtManager.GetRefreshTokenExpiry())
+
+	// Delete old refresh tokens and create new one
+	_ = s.userRepo.DeleteUserRefreshTokens(ctx, user.ID)
+	if err := s.userRepo.CreateRefreshToken(ctx, user.ID, refreshToken, expiresAt); err != nil {
+		return nil, err
+	}
+
+	// Don't return password hash
+	user.PasswordHash = nil
+
+	return &domain.AuthResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		User:         user,
+	}, nil
 }

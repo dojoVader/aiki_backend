@@ -31,6 +31,9 @@ type UserRepository interface {
 	UpdateUserProfile(ctx context.Context, userId int32, fullName, currentJob, experienceLevel *string) (*domain.UserProfile, error)
 	GetUserProfileByID(ctx context.Context, userId int32) (*domain.UserProfile, error)
 	UploadCV(ctx context.Context, userId int32, data []byte) error
+	GetByLinkedInID(ctx context.Context, linkedInID string) (*domain.User, error)
+	CreateLinkedInUser(ctx context.Context, email, linkedInID string, firstName, lastName *string) (*domain.User, error)
+	UpdateLinkedInID(ctx context.Context, userID int32, linkedInID string, firstName, lastName *string) error
 }
 
 type userRepository struct {
@@ -317,3 +320,82 @@ func (r *userRepository) UploadCV(ctx context.Context, userId int32, data []byte
 }
 
 //func (r *userRepository) GetCV(ctx context.Context, userId int32) (byt)
+
+func (r *userRepository) GetByLinkedInID(ctx context.Context, linkedInID string) (*domain.User, error) {
+	query := `
+		SELECT id, first_name, last_name, email, phone_number, password_hash, linkedin_id, is_active, created_at, updated_at
+		FROM users
+		WHERE linkedin_id = $1 AND is_active = TRUE
+		LIMIT 1
+	`
+
+	var user domain.User
+	err := r.db.QueryRow(ctx, query, linkedInID).Scan(
+		&user.ID,
+		&user.FirstName,
+		&user.LastName,
+		&user.Email,
+		&user.PhoneNumber,
+		&user.PasswordHash,
+		&user.LinkedInID,
+		&user.IsActive,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, domain.ErrUserNotFound
+		}
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func (r *userRepository) CreateLinkedInUser(ctx context.Context, email, linkedInID string, firstName, lastName *string) (*domain.User, error) {
+	query := `
+		INSERT INTO users (email, linkedin_id, first_name, last_name)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, first_name, last_name, email, phone_number, password_hash, linkedin_id, is_active, created_at, updated_at
+	`
+
+	var user domain.User
+	err := r.db.QueryRow(ctx, query, email, linkedInID, firstName, lastName).Scan(
+		&user.ID,
+		&user.FirstName,
+		&user.LastName,
+		&user.Email,
+		&user.PhoneNumber,
+		&user.PasswordHash,
+		&user.LinkedInID,
+		&user.IsActive,
+		&user.CreatedAt,
+		&user.UpdatedAt,
+	)
+
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return nil, domain.ErrEmailAlreadyExists
+		}
+		return nil, err
+	}
+
+	return &user, nil
+}
+
+func (r *userRepository) UpdateLinkedInID(ctx context.Context, userID int32, linkedInID string, firstName, lastName *string) error {
+	query := `
+		UPDATE users
+		SET
+			linkedin_id = $2,
+			first_name = COALESCE($3, first_name),
+			last_name = COALESCE($4, last_name),
+			updated_at = NOW()
+		WHERE id = $1 AND is_active = TRUE
+	`
+
+	_, err := r.db.Exec(ctx, query, userID, linkedInID, firstName, lastName)
+	return err
+}

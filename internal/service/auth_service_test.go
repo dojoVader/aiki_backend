@@ -101,6 +101,27 @@ func (m *MockUserRepository) UploadCV(ctx context.Context, userID int32, data []
 	panic("implement me")
 }
 
+func (m *MockUserRepository) GetByLinkedInID(ctx context.Context, linkedInID string) (*domain.User, error) {
+	args := m.Called(ctx, linkedInID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.User), args.Error(1)
+}
+
+func (m *MockUserRepository) CreateLinkedInUser(ctx context.Context, email, linkedInID string, firstName, lastName *string) (*domain.User, error) {
+	args := m.Called(ctx, email, linkedInID, firstName, lastName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*domain.User), args.Error(1)
+}
+
+func (m *MockUserRepository) UpdateLinkedInID(ctx context.Context, userID int32, linkedInID string, firstName, lastName *string) error {
+	args := m.Called(ctx, userID, linkedInID, firstName, lastName)
+	return args.Error(0)
+}
+
 func TestAuthService_Register(t *testing.T) {
 	mockRepo := new(MockUserRepository)
 	jwtManager := jwt.NewManager("test-secret", 15*time.Minute, 7*24*time.Hour)

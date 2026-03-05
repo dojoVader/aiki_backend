@@ -89,7 +89,7 @@ func Load() (*Config, error) {
 		LinkedIn: LinkedInConfig{
 			ClientID:          getEnv("LINKEDIN_CLIENT_ID", ""),
 			ClientSecret:      getEnv("LINKEDIN_CLIENT_SECRET", ""),
-			ClientCallbackUrl: getEnv("LINKEDIN_CALLBACK_URL", "http://localhost:%s/auth/linkedin/callback"),
+			ClientCallbackUrl: getEnv("LINKEDIN_CALLBACK_URL", "http://localhost:%s/api/v1/auth/linkedin/callback"),
 		},
 		SerpAPI: SerpConfig{
 			Key: getEnv("SERP_API_KEY", ""),
